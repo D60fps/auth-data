@@ -446,6 +446,9 @@ class LicenseGeneratorGUI:
                 return
         else:
             self.log_message("Step 2: Git repo already initialized")
+            # Update remote URL in case credentials changed
+            github_url = f"https://{username}:{token}@github.com/{repo}.git"
+            run_git_command(f'git remote set-url origin "{github_url}"')
 
         self.log_message("Step 3: Adding files...")
         run_git_command("git add .")
@@ -462,16 +465,34 @@ class LicenseGeneratorGUI:
         self.log_message("Step 5: Setting branch to main...")
         run_git_command("git branch -M main")
 
-        self.log_message("Step 6: Pushing to GitHub...")
+        self.log_message("Step 6: Fetching from remote...")
+        success, out, err = run_git_command("git fetch origin main")
+        if not success and "not found" not in err.lower():
+            self.log_message(f"Note: {err}")
+
+        self.log_message("Step 7: Pulling remote changes...")
+        success, out, err = run_git_command("git pull origin main --allow-unrelated-histories")
+        if not success and "no changes added" not in err.lower():
+            self.log_message(f"Note: Pulling changes - {err}")
+
+        self.log_message("Step 8: Pushing to GitHub...")
         success, out, err = run_git_command("git push -u origin main")
         
         if success or "Everything up-to-date" in out:
             self.log_message("✓ Successfully pushed to GitHub!")
             messagebox.showinfo("Success", "✓ Keys synced and pushed to GitHub!")
         else:
-            self.log_message(f"✗ Push failed: {err}")
-            self.log_message("💡 Make sure the repository exists at: https://github.com/" + repo)
-            messagebox.showerror("Error", f"Git push failed:\n{err}\n\nMake sure repository exists: https://github.com/{repo}")
+            # Try force push as fallback
+            self.log_message("Note: Attempting force push...")
+            success, out, err = run_git_command("git push -f origin main")
+            
+            if success or "Everything up-to-date" in out:
+                self.log_message("✓ Successfully force-pushed to GitHub!")
+                messagebox.showinfo("Success", "✓ Keys synced and pushed to GitHub (force)!")
+            else:
+                self.log_message(f"✗ Push failed: {err}")
+                self.log_message("💡 Make sure the repository exists at: https://github.com/" + repo)
+                messagebox.showerror("Error", f"Git push failed:\n{err}\n\nMake sure repository exists: https://github.com/{repo}")
 
     def refresh_key_list(self):
         """Refresh the key list display"""
