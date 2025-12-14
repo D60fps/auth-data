@@ -1,6 +1,7 @@
 # AXIS Macro Controller - Fixed All Errors
 # Python 3.12.0 Complete Version
 import urllib.request
+import urllib.error
 import tkinter as tk
 from tkinter import messagebox
 import threading
@@ -59,7 +60,7 @@ else:
 
 
 # ---------------------------
-# FIXED GitHub Sync
+# GitHub Sync
 # ---------------------------
 KEY_DB_FILE = os.path.join(application_path, "keys.json")
 KEYS_REMOTE_URL = "https://raw.githubusercontent.com/D60fps/auth-data/main/keys.json"
@@ -83,15 +84,31 @@ def _save_keys(data):
         pass
 
 def sync_keys_from_github():
-    """Download latest keys.json from GitHub - FIXED URL"""
+    """Download latest keys.json from GitHub - with fallback"""
     try:
+        print(f"Attempting to sync from: {KEYS_REMOTE_URL}")
         with urllib.request.urlopen(KEYS_REMOTE_URL, timeout=10) as response:
             data = response.read()
 
         with open(KEY_DB_FILE, "wb") as f:
             f.write(data)
 
+        print("Successfully synced keys from GitHub")
         return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print("GitHub keys.json not found (404). This is normal on first setup.")
+            print("The client will work locally. Push keys from Key_generator.py to GitHub.")
+            # Create empty keys.json if it doesn't exist
+            if not os.path.exists(KEY_DB_FILE):
+                _save_keys({})
+            return False
+        else:
+            print(f"HTTP Error {e.code}: {e.reason}")
+            return False
+    except urllib.error.URLError as e:
+        print(f"Network error: {e.reason}")
+        return False
     except Exception as e:
         print(f"Failed to sync keys from GitHub: {e}")
         return False
@@ -222,9 +239,13 @@ class AXISMouseController:
                     return True
                 elif normalized in ['mouse4', 'mouse5'] and WIN32_AVAILABLE:
                     try:
+                        XBUTTON1 = getattr(win32con, 'XBUTTON1', 1)
+                        XBUTTON2 = getattr(win32con, 'XBUTTON2', 2)
+                        MOUSEEVENTF_XDOWN = getattr(win32con, 'MOUSEEVENTF_XDOWN', 0x0100)
+                        
                         button_events = {
-                            'mouse4': (win32con.MOUSEEVENTF_XDOWN, win32con.XBUTTON1),
-                            'mouse5': (win32con.MOUSEEVENTF_XDOWN, win32con.XBUTTON2),
+                            'mouse4': (MOUSEEVENTF_XDOWN, XBUTTON1),
+                            'mouse5': (MOUSEEVENTF_XDOWN, XBUTTON2),
                         }
                         
                         if normalized in button_events:
@@ -267,9 +288,12 @@ class AXISMouseController:
                     return True
                 elif normalized in ['mouse4', 'mouse5'] and WIN32_AVAILABLE:
                     try:
+                        XBUTTON1 = getattr(win32con, 'XBUTTON1', 1)
+                        XBUTTON2 = getattr(win32con, 'XBUTTON2', 2)
+                        MOUSEEVENTF_XUP = getattr(win32con, 'MOUSEEVENTF_XUP', 0x0101)
                         button_events = {
-                            'mouse4': (win32con.MOUSEEVENTF_XUP, win32con.XBUTTON1),
-                            'mouse5': (win32con.MOUSEEVENTF_XUP, win32con.XBUTTON2),
+                            'mouse4': (MOUSEEVENTF_XUP, XBUTTON1),
+                            'mouse5': (MOUSEEVENTF_XUP, XBUTTON2),
                         }
                         
                         if normalized in button_events:
@@ -716,6 +740,7 @@ class LicenseManager:
 
     def is_license_valid(self):
         try:
+            # Try to sync, but don't fail if it doesn't work
             sync_keys_from_github()
             
             license_info = self.load_license()
@@ -734,7 +759,7 @@ class LicenseManager:
                 self.delete_license()
                 return False
 
-            ok, msg = self._check_key_authority(key, current_hwid)
+            ok, _ = self._check_key_authority(key, current_hwid)
             if not ok:
                 self.delete_license()
                 return False
@@ -874,7 +899,7 @@ class ActivationWindow:
 
 
 # ---------------------------
-# MAIN GUI - Complete macro logic (unchanged)
+# MAIN GUI
 # ---------------------------
 class MacroGUI:
     def __init__(self, root):
@@ -891,8 +916,8 @@ class MacroGUI:
         self.double_edit_key_var = tk.StringVar()
         self.double_edit_delay_var = tk.DoubleVar(value=6.0)
 
-        self.drag_key = None
-        self.select_key = None
+        self.drag_key = ""
+        self.select_key = ""
         self.drag_active = False
         self.drag_thread = None
         self.drag_stop_event = threading.Event()
@@ -903,9 +928,9 @@ class MacroGUI:
         self.double_edit_thread = None
         self.double_edit_stop_event = threading.Event()
         self.double_edit_listener = None
-        self.double_edit_key = None
-        self.double_edit_drag = None
-        self.double_edit_select = None
+        self.double_edit_key = ""
+        self.double_edit_drag = ""
+        self.double_edit_select = ""
         self.double_edit_lock = threading.Lock()
 
         self.keyboard_hooks = set()
@@ -924,30 +949,289 @@ class MacroGUI:
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-    # [REST OF MacroGUI CLASS - Copy from your original file lines 979-1157]
-    # Include: setup_gui, status_updater, normalize, is_mouse_button, config_watcher,
-    # cleanup_all_bindings, update_bindings, license_checker, bind_drag_select,
-    # on_drag_press, on_drag_release, drag_select_loop, stop_drag_select,
-    # bind_double_edit, on_double_edit_press, on_double_edit_release,
-    # double_edit_loop, stop_double_edit, on_closing
+    def setup_gui(self):
+        """Setup the main GUI components"""
+        main_frame = tk.Frame(self.root, bg="#0a0a0a")
+        main_frame.pack(fill='both', expand=True, padx=15, pady=15)
+
+        title = tk.Label(main_frame, text="AXIS SERVICES - Macro Controller", 
+                        font=("Arial", 16, "bold"), fg="#9fff5b", bg="#0a0a0a")
+        title.pack(pady=(0, 20))
+
+        # Drag Select Section
+        drag_frame = tk.LabelFrame(main_frame, text="DRAG SELECT", 
+                                   font=("Arial", 10, "bold"), 
+                                   fg="#9fff5b", bg="#1a1a1a", padx=10, pady=10)
+        drag_frame.pack(fill='x', pady=(0, 15))
+
+        tk.Label(drag_frame, text="Trigger Key:", fg="#ffffff", bg="#1a1a1a").pack(anchor='w')
+        tk.Entry(drag_frame, textvariable=self.drag_key_var, bg="#2a2a2a", 
+                fg="#ffffff", width=30).pack(fill='x', pady=(0, 5))
+
+        tk.Label(drag_frame, text="Select Key:", fg="#ffffff", bg="#1a1a1a").pack(anchor='w')
+        tk.Entry(drag_frame, textvariable=self.select_key_var, bg="#2a2a2a", 
+                fg="#ffffff", width=30).pack(fill='x', pady=(0, 10))
+
+        btn_frame = tk.Frame(drag_frame, bg="#1a1a1a")
+        btn_frame.pack(fill='x')
+        tk.Button(btn_frame, text="Start", command=self.bind_drag_select, 
+                 bg="#9fff5b", fg="#000000", width=15).pack(side='left', padx=(0, 5))
+        tk.Button(btn_frame, text="Stop", command=self.stop_drag_select, 
+                 bg="#ff5555", fg="#ffffff", width=15).pack(side='left')
+
+        self.drag_status_label = tk.Label(drag_frame, text="Status: Idle", 
+                                         fg="#888888", bg="#1a1a1a")
+        self.drag_status_label.pack(anchor='w', pady=(10, 0))
+
+        # Double Edit Section
+        double_frame = tk.LabelFrame(main_frame, text="DOUBLE EDIT", 
+                                     font=("Arial", 10, "bold"), 
+                                     fg="#9fff5b", bg="#1a1a1a", padx=10, pady=10)
+        double_frame.pack(fill='x', pady=(0, 15))
+
+        tk.Label(double_frame, text="Trigger Key:", fg="#ffffff", bg="#1a1a1a").pack(anchor='w')
+        tk.Entry(double_frame, textvariable=self.double_edit_key_var, bg="#2a2a2a", 
+                fg="#ffffff", width=30).pack(fill='x', pady=(0, 5))
+
+        tk.Label(double_frame, text="Drag Key:", fg="#ffffff", bg="#1a1a1a").pack(anchor='w')
+        tk.Entry(double_frame, textvariable=self.double_edit_drag_var, bg="#2a2a2a", 
+                fg="#ffffff", width=30).pack(fill='x', pady=(0, 5))
+
+        tk.Label(double_frame, text="Select Key:", fg="#ffffff", bg="#1a1a1a").pack(anchor='w')
+        tk.Entry(double_frame, textvariable=self.double_edit_select_var, bg="#2a2a2a", 
+                fg="#ffffff", width=30).pack(fill='x', pady=(0, 5))
+
+        delay_frame = tk.Frame(double_frame, bg="#1a1a1a")
+        delay_frame.pack(fill='x', pady=(0, 10))
+        tk.Label(delay_frame, text="Delay (s):", fg="#ffffff", bg="#1a1a1a").pack(side='left')
+        tk.Scale(delay_frame, from_=0.1, to=20.0, resolution=0.1, 
+                variable=self.double_edit_delay_var, bg="#2a2a2a", fg="#9fff5b",
+                orient='horizontal').pack(side='left', fill='x', expand=True, padx=(10, 0))
+        self.delay_val_label = tk.Label(delay_frame, text="6.0s", fg="#9fff5b", bg="#1a1a1a")
+        self.delay_val_label.pack(side='left', padx=(10, 0))
+
+        btn_frame2 = tk.Frame(double_frame, bg="#1a1a1a")
+        btn_frame2.pack(fill='x')
+        tk.Button(btn_frame2, text="Start", command=self.bind_double_edit, 
+                 bg="#9fff5b", fg="#000000", width=15).pack(side='left', padx=(0, 5))
+        tk.Button(btn_frame2, text="Stop", command=self.stop_double_edit, 
+                 bg="#ff5555", fg="#ffffff", width=15).pack(side='left')
+
+        self.double_edit_status_label = tk.Label(double_frame, text="Status: Idle", 
+                                                 fg="#888888", bg="#1a1a1a")
+        self.double_edit_status_label.pack(anchor='w', pady=(10, 0))
+
+    def status_updater(self):
+        """Update status labels periodically"""
+        while not self.shutting_down:
+            try:
+                if self.delay_val_label:
+                    delay = self.double_edit_delay_var.get()
+                    self.delay_val_label.config(text=f"{delay:.1f}s")
+                time.sleep(0.1)
+            except Exception:
+                pass
+
+    def config_watcher(self):
+        """Watch for configuration changes"""
+        while not self.shutting_down:
+            try:
+                current = (
+                    self.drag_key_var.get(),
+                    self.select_key_var.get(),
+                    self.double_edit_key_var.get(),
+                    self.double_edit_drag_var.get(),
+                    self.double_edit_select_var.get(),
+                )
+                if current != self.last_config:
+                    self.last_config = current
+                time.sleep(0.5)
+            except Exception:
+                pass
+
+    def license_checker(self):
+        """Periodically check license validity"""
+        while not self.shutting_down:
+            try:
+                license_mgr = LicenseManager()
+                if not license_mgr.is_license_valid():
+                    self.on_closing()
+                time.sleep(30)
+            except Exception:
+                pass
+
+    def normalize(self, key: str) -> str:
+        """Normalize key name"""
+        return key.lower().strip() if key else ""
+
+    def is_mouse_button(self, key: str) -> bool:
+        """Check if key is a mouse button"""
+        return key_manager.is_mouse_button(key)
+
+    def bind_drag_select(self):
+        """Bind and start drag select macro"""
+        with self.drag_lock:
+            self.drag_key = self.normalize(self.drag_key_var.get())
+            self.select_key = self.normalize(self.select_key_var.get())
+            
+            if not self.drag_key or not self.select_key:
+                if self.drag_status_label:
+                    self.drag_status_label.config(text="Status: Missing keys", fg="#ff5555")
+                return
+            
+            if self.drag_active:
+                return
+            
+            self.drag_active = True
+            self.drag_stop_event.clear()
+            self.drag_thread = threading.Thread(target=self.drag_select_loop, daemon=True)
+            self.drag_thread.start()
+            if self.drag_status_label:
+                self.drag_status_label.config(text="Status: Active", fg="#00ff88")
+
+    def on_drag_press(self):
+        """Handle drag key press"""
+        if self.drag_active and self.drag_key and self.select_key:
+            try:
+                key_manager.press(self.select_key)
+            except Exception:
+                pass
+
+    def on_drag_release(self):
+        """Handle drag key release"""
+        if self.drag_active and self.select_key:
+            try:
+                key_manager.release(self.select_key)
+            except Exception:
+                pass
+
+    def drag_select_loop(self):
+        """Main drag select loop"""
+        try:
+            if self.drag_key and not self.is_mouse_button(self.drag_key):
+                listener = AXISMouseListener(self.drag_key, self.on_drag_press, self.on_drag_release)
+                self.drag_listener = listener
+                listener.start()
+                while self.drag_active and not self.drag_stop_event.is_set():
+                    time.sleep(0.1)
+                listener.stop()
+            else:
+                while self.drag_active and not self.drag_stop_event.is_set():
+                    time.sleep(0.1)
+        except Exception:
+            pass
+
+    def stop_drag_select(self):
+        """Stop drag select macro"""
+        with self.drag_lock:
+            self.drag_active = False
+            self.drag_stop_event.set()
+            if self.drag_listener:
+                try:
+                    self.drag_listener.stop()
+                except Exception:
+                    pass
+            if self.drag_status_label:
+                self.drag_status_label.config(text="Status: Idle", fg="#888888")
+
+    def bind_double_edit(self):
+        """Bind and start double edit macro"""
+        with self.double_edit_lock:
+            self.double_edit_key = self.normalize(self.double_edit_key_var.get())
+            self.double_edit_drag = self.normalize(self.double_edit_drag_var.get())
+            self.double_edit_select = self.normalize(self.double_edit_select_var.get())
+            
+            if not all([self.double_edit_key, self.double_edit_drag, self.double_edit_select]):
+                if self.double_edit_status_label:
+                    self.double_edit_status_label.config(text="Status: Missing keys", fg="#ff5555")
+                return
+            
+            if self.double_edit_active:
+                return
+            
+            self.double_edit_active = True
+            self.double_edit_stop_event.clear()
+            self.double_edit_thread = threading.Thread(target=self.double_edit_loop, daemon=True)
+            self.double_edit_thread.start()
+            if self.double_edit_status_label:
+                self.double_edit_status_label.config(text="Status: Active", fg="#00ff88")
+
+    def on_double_edit_press(self):
+        """Handle double edit key press"""
+        pass
+
+    def on_double_edit_release(self):
+        """Handle double edit key release"""
+        if self.double_edit_active and self.double_edit_drag and self.double_edit_select:
+            try:
+                delay = self.double_edit_delay_var.get()
+                key_manager.press(self.double_edit_drag)
+                key_manager.press(self.double_edit_select)
+                time.sleep(delay)
+                key_manager.release(self.double_edit_select)
+                key_manager.release(self.double_edit_drag)
+            except Exception:
+                pass
+
+    def double_edit_loop(self):
+        """Main double edit loop"""
+        try:
+            listener = AXISMouseListener(self.double_edit_key, 
+                                        self.on_double_edit_press, 
+                                        self.on_double_edit_release)
+            self.double_edit_listener = listener
+            listener.start()
+            while self.double_edit_active and not self.double_edit_stop_event.is_set():
+                time.sleep(0.1)
+            listener.stop()
+        except Exception:
+            pass
+
+    def stop_double_edit(self):
+        """Stop double edit macro"""
+        with self.double_edit_lock:
+            self.double_edit_active = False
+            self.double_edit_stop_event.set()
+            if self.double_edit_listener:
+                try:
+                    self.double_edit_listener.stop()
+                except Exception:
+                    pass
+            if self.double_edit_status_label:
+                self.double_edit_status_label.config(text="Status: Idle", fg="#888888")
+
+    def on_closing(self):
+        """Handle window closing"""
+        self.shutting_down = True
+        self.stop_drag_select()
+        self.stop_double_edit()
+        key_manager.release_all()
+        mouse_controller.release_all()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
 
 # ---------------------------
-# FIXED Main Entry Point
+# Main Entry Point
 # ---------------------------
 def main():
     try:
-        # Sync keys from GitHub on startup
+        # Try to sync keys from GitHub on startup (not critical)
+        print("AXIS SERVICES - Macro Controller Starting...")
         sync_keys_from_github()
         
         license_mgr = LicenseManager()
 
         if license_mgr.is_license_valid():
+            print("Valid license found. Starting Macro Controller...")
             root = tk.Tk()
-            app = MacroGUI(root)  # FIXED: Was MainApp
+            MacroGUI(root)
             root.mainloop()
             return
 
+        print("No valid license found. Showing activation window...")
         activation_root = tk.Tk()
 
         def on_activation_success():
@@ -956,13 +1240,14 @@ def main():
             except Exception:
                 pass
             root = tk.Tk()
-            app = MacroGUI(root)  # FIXED: Was MainApp
+            MacroGUI(root)
             root.mainloop()
 
         ActivationWindow(activation_root, on_activation_success)
         activation_root.mainloop()
 
     except Exception as e:
+        print(f"Critical error: {e}")
         try:
             root = tk.Tk()
             root.withdraw()
@@ -975,4 +1260,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()  # FIXED: Now calls main() correctly
+    main()
