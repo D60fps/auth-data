@@ -698,19 +698,25 @@ class LicenseManager:
             if not license_data_str:
                 return False, "No license data provided"
 
+            # The license_data_str should be the raw encoded key from the generator
+            # Format: base64_encoded_data.checksum
             license_info = self._decode_license(license_data_str)
             if not license_info:
+                print(f"DEBUG: Failed to decode license. Input: {license_data_str[:50]}")
                 return False, "Invalid license format"
 
             key = license_info.get("key")
             current_hwid = self.get_hwid()
+            
+            print(f"DEBUG: Key from license: {key}")
+            print(f"DEBUG: Current HWID: {current_hwid}")
 
             ok, msg = self._check_key_authority(key, current_hwid)
             if not ok:
                 return False, msg
 
             license_hwid = license_info.get("hwid", "")
-            if license_hwid != current_hwid:
+            if license_hwid and license_hwid != "None" and license_hwid != current_hwid:
                 return False, (
                     f"License HWID mismatch\n"
                     f"Your HWID: {current_hwid}\n"
@@ -736,6 +742,7 @@ class LicenseManager:
                 return False, "Failed to save license"
 
         except Exception as e:
+            print(f"DEBUG: Exception in validate_license_key: {e}")
             return False, f"Validation error: {str(e)}"
 
     def is_license_valid(self):

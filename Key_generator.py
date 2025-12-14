@@ -195,6 +195,15 @@ class LicenseGeneratorGUI:
             font=("Segoe UI", 9, "bold")
         ).pack(side="left", expand=True, fill="x", padx=5)
 
+        tk.Button(
+            mgmt_btns,
+            text="SHOW LICENSE CODE",
+            bg="#0066ff",
+            fg="white",
+            command=self.show_license_code,
+            font=("Segoe UI", 9, "bold")
+        ).pack(side="left", expand=True, fill="x", padx=5)
+
         # GitHub Push Button
         push_frame = tk.Frame(body, bg="#0d0d0d")
         push_frame.pack(fill="x", pady=10)
@@ -513,6 +522,70 @@ class LicenseGeneratorGUI:
                 tk.END,
                 f"{rec['key']} | {status} | Exp: {exp} | HWID: {hwid_display}"
             )
+
+    def show_license_code(self):
+        """Show the encoded license code for the user to copy"""
+        sel = self.listbox.curselection()
+        if not sel:
+            messagebox.showwarning("Warning", "Please select a key from the list")
+            return
+
+        key_line = self.listbox.get(sel[0])
+        key = key_line.split(" | ")[0].strip()
+        path = key_path(key)
+
+        if not os.path.exists(path):
+            messagebox.showerror("Error", "Key file not found")
+            return
+
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+
+            key = data.get("key")
+            expires = data.get("expires")
+            hwid = data.get("hwid") or "None"
+
+            # Encode the license
+            license_str = f"{key}|{expires}|{hwid}"
+            encoded = base64.b64encode(license_str.encode()).decode()
+            checksum = hashlib.sha256(encoded.encode()).hexdigest()[:16]
+            license_code = f"{encoded}.{checksum}"
+
+            # Show it in a window
+            code_window = tk.Toplevel(self.root)
+            code_window.title(f"License Code - {key}")
+            code_window.geometry("600x300")
+            code_window.configure(bg="#0d0d0d")
+
+            tk.Label(code_window, text="Copy this code and paste it in the client:", 
+                    fg="#9fff5b", bg="#0d0d0d", font=("Segoe UI", 10, "bold")).pack(pady=10)
+
+            code_frame = tk.Frame(code_window, bg="#111", highlightbackground="#9fff5b", highlightthickness=1)
+            code_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+            code_text = tk.Text(code_frame, bg="#111", fg="#00ff88", font=("Consolas", 9), wrap=tk.WORD)
+            code_text.pack(fill="both", expand=True, padx=10, pady=10)
+            code_text.insert("1.0", license_code)
+            code_text.config(state="disabled")
+
+            btn_frame = tk.Frame(code_window, bg="#0d0d0d")
+            btn_frame.pack(fill="x", padx=20, pady=10)
+
+            def copy_to_clipboard():
+                self.root.clipboard_clear()
+                self.root.clipboard_append(license_code)
+                messagebox.showinfo("Copied", "License code copied to clipboard!")
+
+            tk.Button(btn_frame, text="Copy to Clipboard", command=copy_to_clipboard,
+                     bg="#9fff5b", fg="#000000", font=("Segoe UI", 9, "bold")).pack(side="left", padx=5)
+
+            tk.Button(btn_frame, text="Close", command=code_window.destroy,
+                     bg="#555", fg="white", font=("Segoe UI", 9, "bold")).pack(side="left", padx=5)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to show license code: {str(e)}")
+            self.log_message(f"✗ Error: {str(e)}")
 
 if __name__ == "__main__":
     root = tk.Tk()
