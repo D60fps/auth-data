@@ -1,5 +1,3 @@
-# admin.py - Enhanced Admin Panel with HWID Reset & GitHub Auto-Push
-
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
 import hashlib
@@ -11,17 +9,13 @@ import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 import threading
+import webbrowser
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 KEYS_DIR = os.path.join(APP_DIR, "keys")
 os.makedirs(KEYS_DIR, exist_ok=True)
 
 KEYS_JSON = os.path.join(APP_DIR, "keys.json")
-GITHUB_REPO_URL = "https://github.com/D60fps/auth-data.git"
-
-# ---------------------------
-# Helpers
-# ---------------------------
 
 def generate_random_key():
     return "-".join(
@@ -75,51 +69,12 @@ def run_git_command(cmd, cwd=None):
             capture_output=True,
             text=True,
             shell=True,
-            timeout=15
+            timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
         )
         return result.returncode == 0, result.stdout, result.stderr
     except Exception as e:
         return False, "", str(e)
-
-def setup_git_repo(username, token):
-    """Initialize and setup git repository"""
-    git_dir = os.path.join(APP_DIR, ".git")
-    
-    # Check if repo already exists
-    if os.path.exists(git_dir):
-        return True, "Git repo already exists"
-    
-    # Initialize repo
-    success, out, err = run_git_command("git init")
-    if not success:
-        return False, f"Git init failed: {err}"
-    
-    # Configure user
-    run_git_command(f'git config user.name "{username}"')
-    run_git_command(f'git config user.email "{username}@users.noreply.github.com"')
-    
-    # Add remote with auth
-    repo_url_with_auth = GITHUB_REPO_URL.replace("https://", f"https://{username}:{token}@")
-    success, out, err = run_git_command(f'git remote add origin "{repo_url_with_auth}"')
-    if not success and "already exists" not in err:
-        return False, f"Failed to add remote: {err}"
-    
-    # Create initial commit on main
-    run_git_command("git add .")
-    success, out, err = run_git_command('git commit -m "Initial commit"')
-    if not success and "nothing to commit" not in err.lower():
-        return False, f"Initial commit failed: {err}"
-    
-    # Rename branch to main if needed
-    success, out, err = run_git_command("git branch -M main")
-    if not success:
-        return False, f"Failed to create main branch: {err}"
-    
-    return True, "Git repo ready"
-
-# ---------------------------
-# GUI
-# ---------------------------
 
 class LicenseGeneratorGUI:
     def __init__(self, root):
@@ -134,6 +89,7 @@ class LicenseGeneratorGUI:
         self.hwid_var = tk.StringVar()
         self.github_username_var = tk.StringVar()
         self.github_token_var = tk.StringVar()
+        self.github_repo_var = tk.StringVar(value="D60fps/auth-data")
 
         self.setup_gui()
         self.refresh_key_list()
@@ -163,6 +119,19 @@ class LicenseGeneratorGUI:
 
         tk.Label(github_frame, text="GitHub Token (Personal Access Token)", fg="white", bg="#1a1a1a").pack(anchor="w", pady=(5, 0))
         tk.Entry(github_frame, textvariable=self.github_token_var, bg="#111", fg="white", show="*", width=40).pack(fill="x", pady=(0, 10))
+
+        tk.Label(github_frame, text="Repository (username/repo)", fg="white", bg="#1a1a1a").pack(anchor="w", pady=(5, 0))
+        tk.Entry(github_frame, textvariable=self.github_repo_var, bg="#111", fg="white", width=40).pack(fill="x", pady=(0, 10))
+
+        help_btn = tk.Button(
+            github_frame,
+            text="📖 How to create GitHub Token",
+            bg="#555",
+            fg="white",
+            command=lambda: webbrowser.open("https://github.com/settings/tokens/new?scopes=repo&description=AXIS+Keys"),
+            font=("Segoe UI", 8)
+        )
+        help_btn.pack(anchor="w", pady=(0, 5))
 
         # Key Generation Section
         gen_frame = tk.LabelFrame(body, text="Key Generation", fg="#9fff5b", bg="#1a1a1a", font=("Segoe UI", 9, "bold"), padx=10, pady=10)
@@ -438,10 +407,11 @@ class LicenseGeneratorGUI:
         """Sync keys and push to GitHub"""
         username = self.github_username_var.get().strip()
         token = self.github_token_var.get().strip()
+        repo = self.github_repo_var.get().strip()
 
-        if not username or not token:
-            self.log_message("✗ GitHub username and token required")
-            messagebox.showerror("Error", "Please enter GitHub username and token")
+        if not username or not token or not repo:
+            self.log_message("✗ GitHub username, token, and repository required")
+            messagebox.showerror("Error", "Please enter all GitHub credentials")
             return
 
         self.log_message("🔄 Starting GitHub sync...")
@@ -452,19 +422,33 @@ class LicenseGeneratorGUI:
             messagebox.showerror("Error", "Failed to sync keys to central file")
             return
 
-        self.log_message("Step 2: Setting up git repository...")
-        success, msg = setup_git_repo(username, token)
-        if not success:
-            self.log_message(f"✗ {msg}")
-            messagebox.showerror("Error", msg)
-            return
+        # Check if git repo exists
+        git_dir = os.path.join(APP_DIR, ".git")
+        
+        if not os.path.exists(git_dir):
+            self.log_message("Step 2: Initializing git repository...")
+            success, out, err = run_git_command("git init")
+            if not success:
+                self.log_message(f"✗ Git init failed: {err}")
+                messagebox.showerror("Error", f"Git init failed:\n{err}")
+                return
+            
+            self.log_message("Step 3: Configuring git...")
+            run_git_command(f'git config user.name "{username}"')
+            run_git_command(f'git config user.email "{username}@users.noreply.github.com"')
+            
+            github_url = f"https://{username}:{token}@github.com/{repo}.git"
+            self.log_message("Step 4: Adding remote...")
+            success, out, err = run_git_command(f'git remote add origin "{github_url}"')
+            if not success:
+                self.log_message(f"✗ Failed to add remote: {err}")
+                messagebox.showerror("Error", f"Failed to add remote:\n{err}")
+                return
+        else:
+            self.log_message("Step 2: Git repo already initialized")
 
-        self.log_message("✓ Git repo ready")
-
-        self.log_message("Step 3: Adding files to git...")
-        success, _, err = run_git_command("git add .")
-        if not success:
-            self.log_message(f"Warning: {err}")
+        self.log_message("Step 3: Adding files...")
+        run_git_command("git add .")
 
         self.log_message("Step 4: Creating commit...")
         commit_msg = f"Update keys - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -474,18 +458,20 @@ class LicenseGeneratorGUI:
             self.log_message("ℹ No changes to commit")
         elif not success:
             self.log_message(f"Warning: {err}")
-        else:
-            self.log_message("✓ Commit created")
 
-        self.log_message("Step 5: Pushing to GitHub...")
+        self.log_message("Step 5: Setting branch to main...")
+        run_git_command("git branch -M main")
+
+        self.log_message("Step 6: Pushing to GitHub...")
         success, out, err = run_git_command("git push -u origin main")
         
-        if success:
+        if success or "Everything up-to-date" in out:
             self.log_message("✓ Successfully pushed to GitHub!")
             messagebox.showinfo("Success", "✓ Keys synced and pushed to GitHub!")
         else:
             self.log_message(f"✗ Push failed: {err}")
-            messagebox.showerror("Error", f"Git push failed:\n{err}")
+            self.log_message("💡 Make sure the repository exists at: https://github.com/" + repo)
+            messagebox.showerror("Error", f"Git push failed:\n{err}\n\nMake sure repository exists: https://github.com/{repo}")
 
     def refresh_key_list(self):
         """Refresh the key list display"""
@@ -506,10 +492,6 @@ class LicenseGeneratorGUI:
                 tk.END,
                 f"{rec['key']} | {status} | Exp: {exp} | HWID: {hwid_display}"
             )
-
-# ---------------------------
-# Run
-# ---------------------------
 
 if __name__ == "__main__":
     root = tk.Tk()
